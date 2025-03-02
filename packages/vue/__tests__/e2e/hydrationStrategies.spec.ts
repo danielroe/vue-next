@@ -42,12 +42,13 @@ describe('async component hydration strategies', () => {
       await goToCase('idle', '', vapor)
       // not hydrated yet
       expect(await page().evaluate(() => window.isHydrated)).toBe(false)
-      // trigger loader
+      // loader is only called once idle
+      await page().waitForFunction(() => window.resolveLoader)
       await page().evaluate(() => window.resolveLoader())
       // wait for hydration
       await page().waitForFunction(() => window.isHydrated)
-      // assert message order: hydration should happen after already queued main thread work
-      expect(messages.slice(1)).toMatchObject(['resolve', 'busy', 'hydrated'])
+      // assert message order
+      expect(messages.slice(1)).toMatchObject(['resolve', 'hydrated'])
       await assertHydrationSuccess()
     })
 

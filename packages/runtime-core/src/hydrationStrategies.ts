@@ -30,7 +30,7 @@ function ensureIdleCallbacks() {
  *          listeners.
  */
 export type HydrationStrategy = (
-  hydrate: () => void,
+  hydrate: () => void | Promise<any>,
   forEachElement: (cb: (el: Element) => any) => void,
 ) => (() => void) | void
 
@@ -109,11 +109,12 @@ export const hydrateOnInteraction: HydrationStrategyFactory<
   (hydrate, forEach) => {
     if (isString(interactions)) interactions = [interactions]
     let hasHydrated = false
-    const doHydrate = (e: Event) => {
+    const doHydrate = async (e: Event) => {
       if (!hasHydrated) {
         hasHydrated = true
         teardown()
-        hydrate()
+        // oxlint-disable-next-line no-restricted-syntax
+        await hydrate()
         // replay event if the event is not delegated
         if (!(`$evt${e.type}` in e.target!)) {
           e.target!.dispatchEvent(new (e.constructor as any)(e.type, e))
