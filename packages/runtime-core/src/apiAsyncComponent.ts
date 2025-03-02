@@ -365,12 +365,21 @@ export function performAsyncHydrate(
     hydrate()
   }
   if (hydrateStrategy) {
-    const teardown = hydrateStrategy(
-      () =>
-        getResolvedComp()
-          ? performHydrate()
-          : load().then(() => !instance.isUnmounted && performHydrate()),
-      cb => forEachElement(el, cb),
+    const hydrateWithCallback = (postHydrate?: () => void) => {
+      if (getResolvedComp()) {
+        performHydrate()
+        postHydrate && postHydrate()
+      } else {
+        load().then(() => {
+          if (!instance.isUnmounted) {
+            performHydrate()
+            postHydrate && postHydrate()
+          }
+        })
+      }
+    }
+    const teardown = hydrateStrategy(hydrateWithCallback, cb =>
+      forEachElement(el, cb),
     )
     if (teardown) {
       ;(instance.bum || (instance.bum = [])).push(teardown)
