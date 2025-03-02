@@ -64,6 +64,8 @@ export function defineAsyncComponent<
     },
   } = createAsyncComponentContext(source)
 
+  let performLoad: () => Promise<ConcreteComponent | void>
+
   return defineComponent({
     name: 'AsyncComponentWrapper',
 
@@ -75,7 +77,7 @@ export function defineAsyncComponent<
         instance,
         hydrate,
         getResolvedComp,
-        load,
+        hydrateStrategy ? () => performLoad() : load,
         hydrateStrategy,
         true,
       )
@@ -110,19 +112,25 @@ export function defineAsyncComponent<
         (__FEATURE_SUSPENSE__ && suspensible && instance.suspense) ||
         (__SSR__ && isInSSRComponentSetup)
       ) {
-        return load()
-          .then(comp => {
-            return () => createInnerComp(comp, instance)
-          })
-          .catch(err => {
-            onError(err)
-            return () =>
-              errorComponent
-                ? createVNode(errorComponent as ConcreteComponent, {
-                    error: err,
-                  })
-                : null
-          })
+        performLoad = () =>
+          load()
+            .then(comp => {
+              return () => createInnerComp(comp, instance)
+            })
+            .catch(err => {
+              onError(err)
+              return () =>
+                errorComponent
+                  ? createVNode(errorComponent as ConcreteComponent, {
+                      error: err,
+                    })
+                  : null
+            })
+
+        if (!hydrateStrategy) {
+          return performLoad()
+        }
+        return
       }
 
       const { loaded, error, delayed } = useAsyncComponentState(
@@ -132,28 +140,34 @@ export function defineAsyncComponent<
         instance,
       )
 
-      load()
-        .then(() => {
-          if (instance.isUnmounted) return
-          loaded.value = true
-          if (
-            instance.parent &&
-            instance.parent.vnode &&
-            isKeepAlive(instance.parent.vnode)
-          ) {
-            // parent is keep-alive, force update so the loaded component's
-            // name is taken into account
-            ;(instance.parent as ComponentInternalInstance).update()
-          }
-        })
-        .catch(err => {
-          if (instance.isUnmounted) {
-            setPendingRequest(null)
-            return
-          }
-          onError(err)
-          error.value = err
-        })
+      performLoad = () =>
+        load()
+          .then(() => {
+            if (instance.isUnmounted) return
+            loaded.value = true
+            if (
+              instance.parent &&
+              instance.parent.vnode &&
+              isKeepAlive(instance.parent.vnode)
+            ) {
+              // parent is keep-alive, force update so the loaded component's
+              // name is taken into account
+              ;(instance.parent as ComponentInternalInstance).update()
+            }
+          })
+          .catch(err => {
+            if (instance.isUnmounted) {
+              setPendingRequest(null)
+              return
+            }
+            onError(err)
+            error.value = err
+          })
+
+      // lazy perform load if hydrate strategy is present
+      if (!hydrateStrategy) {
+        performLoad()
+      }
 
       return () => {
         resolvedComp = getResolvedComp()
@@ -323,7 +337,7 @@ export function performAsyncHydrate(
   instance: GenericComponentInstance,
   hydrate: () => void,
   getResolvedComp: () => GenericComponent | undefined,
-  load: () => Promise<GenericComponent>,
+  load: () => Promise<unknown>,
   hydrateStrategy: HydrationStrategy | undefined,
   // vdom: a parent update before lazy hydration ran has already patched the
   // subtree, so hydrating on top of it would mismatch. Vapor props flow
@@ -350,19 +364,20 @@ export function performAsyncHydrate(
     if (!el.parentNode || (wasConnected && !el.isConnected)) return
     hydrate()
   }
-  const doHydrate = hydrateStrategy
-    ? () => {
-        const teardown = hydrateStrategy(performHydrate, cb =>
-          forEachElement(el, cb),
-        )
-        if (teardown) {
-          ;(instance.bum || (instance.bum = [])).push(teardown)
-        }
-      }
-    : performHydrate
-  if (getResolvedComp()) {
-    doHydrate()
+  if (hydrateStrategy) {
+    const teardown = hydrateStrategy(
+      () =>
+        getResolvedComp()
+          ? performHydrate()
+          : load().then(() => !instance.isUnmounted && performHydrate()),
+      cb => forEachElement(el, cb),
+    )
+    if (teardown) {
+      ;(instance.bum || (instance.bum = [])).push(teardown)
+    }
+  } else if (getResolvedComp()) {
+    performHydrate()
   } else {
-    load().then(() => !instance.isUnmounted && doHydrate())
+    load().then(() => !instance.isUnmounted && performHydrate())
   }
 }
