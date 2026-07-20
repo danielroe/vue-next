@@ -170,7 +170,7 @@ export function createConfigsForPackage({
     if (pkg.name === 'vue') {
       if (format === 'esm-browser-vapor' || format === 'esm-bundler-runtime') {
         entryFile = 'runtime-with-vapor.ts'
-      } else if (format === 'esm-bundler') {
+      } else if (format === 'esm-bundler' || format === 'cjs') {
         entryFile = 'index-with-vapor.ts'
       } else if (format.includes('runtime')) {
         entryFile = 'runtime.ts'
