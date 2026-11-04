@@ -23,6 +23,7 @@ import {
   defineComponent,
   getCurrentInstance,
   h,
+  hydrateOnInteraction,
   hydrateOnVisible,
   nextTick,
   onMounted,
@@ -2525,6 +2526,108 @@ describe('SSR hydration', () => {
       await new Promise(r => setTimeout(r))
       expect(container.innerHTML).toBe('<button>b0</button>')
       expect(`Hydration node mismatch`).not.toHaveBeenWarned()
+    })
+  })
+
+  describe('hydrateOnInteraction', () => {
+    async function setup(
+      interactions: Parameters<typeof hydrateOnInteraction>[0],
+      render: (AsyncComp: Component) => VNodeChild = C => h(C),
+    ) {
+      const onClick = vi.fn()
+      const Comp = {
+        render: () => h('button', { onClick }, [h('span', 'hi')]),
+      }
+      const ServerComp = defineAsyncComponent(() => Promise.resolve(Comp))
+      const container = document.createElement('div')
+      container.innerHTML = await renderToString(
+        h({ render: () => render(ServerComp) }),
+      )
+      document.body.appendChild(container)
+
+      let resolve: ((comp: Component) => void) | undefined
+      const loader = vi.fn(() => new Promise<Component>(r => (resolve = r)))
+      const ClientComp = defineAsyncComponent({
+        loader,
+        hydrate: hydrateOnInteraction(interactions),
+      })
+      createSSRApp({ render: () => render(ClientComp) }).mount(container)
+      return {
+        container,
+        onClick,
+        loader,
+        load: async () => {
+          resolve!(Comp)
+          await new Promise(r => setTimeout(r))
+        },
+      }
+    }
+
+    test('should replay interactions that happen while loading', async () => {
+      const { container, onClick, loader, load } = await setup([
+        'pointerenter',
+        'click',
+      ])
+      const button = container.querySelector('button')!
+      const span = container.querySelector('span')!
+      button.dispatchEvent(new Event('pointerenter'))
+      span.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+      )
+      span.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, shiftKey: true }),
+      )
+      await new Promise(r => setTimeout(r))
+      expect(loader).toHaveBeenCalledTimes(1)
+      expect(onClick).not.toHaveBeenCalled()
+
+      await load()
+      expect(onClick).toHaveBeenCalledTimes(2)
+      expect(onClick.mock.calls[0][0]).toMatchObject({
+        ctrlKey: true,
+        target: span,
+      })
+      expect(onClick.mock.calls[1][0]).toMatchObject({
+        shiftKey: true,
+        target: span,
+      })
+
+      span.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(onClick).toHaveBeenCalledTimes(3)
+    })
+
+    test('should not replay interactions to ancestors', async () => {
+      const onParentClick = vi.fn()
+      const { container, onClick, load } = await setup('click', C =>
+        h('div', { onClick: onParentClick }, [h(C)]),
+      )
+      const span = container.querySelector('span')!
+      span.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(onParentClick).toHaveBeenCalledTimes(1)
+
+      await load()
+      expect(onClick).toHaveBeenCalledTimes(1)
+      expect(onParentClick).toHaveBeenCalledTimes(1)
+
+      span.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(onClick).toHaveBeenCalledTimes(2)
+      expect(onParentClick).toHaveBeenCalledTimes(2)
+    })
+
+    test('should drop queued interactions when unmounted while loading', async () => {
+      const show = ref(true)
+      const { container, onClick, load } = await setup(['click'], C =>
+        h('div', [show.value ? h(C) : null]),
+      )
+      const button = container.querySelector('button')!
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      show.value = false
+      await nextTick()
+
+      await load()
+      expect(onClick).not.toHaveBeenCalled()
+      expect(container.innerHTML).toBe('<div><!----></div>')
     })
   })
 

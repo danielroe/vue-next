@@ -111,33 +111,68 @@ export const hydrateOnInteraction: HydrationStrategyFactory<
   (interactions = []) =>
   (hydrate, forEach) => {
     if (isString(interactions)) interactions = [interactions]
-    let hasHydrated = false
-    const doHydrate = (e: Event) => {
-      if (!hasHydrated) {
-        hasHydrated = true
-        teardown()
-        hydrate(() => {
-          // replay event unless it is still propagating to a delegated handler
-          if (!e.eventPhase || !(`$evt${e.type}` in e.target!)) {
-            e.target!.dispatchEvent(new (e.constructor as any)(e.type, e))
-          }
-        })
+    const roots: Element[] = []
+    forEach(el => {
+      roots.push(el)
+    })
+    let queue: [Event, EventTarget][] | null = null
+    let triggered = false
+
+    const isDelegated = (node: Node | null, type: string) => {
+      for (; node; node = node.parentNode) {
+        if (`$evt${type}` in node) return true
+        if (roots.includes(node as Element)) break
+      }
+      return false
+    }
+
+    const replay = (e: Event, target: EventTarget) => {
+      const event = new (e.constructor as any)(e.type, e)
+      if (isDelegated(target as Node, e.type)) {
+        // a delegated handler still receives an event that is propagating
+        if (!e.eventPhase) target.dispatchEvent(event)
+      } else {
+        // ancestors of the component have already received the original event
+        for (const el of roots) el.addEventListener(e.type, stopPropagation)
+        target.dispatchEvent(event)
+        for (const el of roots) el.removeEventListener(e.type, stopPropagation)
       }
     }
-    const teardown = () => {
-      forEach(el => {
-        for (const i of interactions) {
-          el.removeEventListener(i, doHydrate)
+
+    const onInteraction = (e: Event) => {
+      if (triggered) {
+        if (queue) queue.push([e, e.target!])
+        return
+      }
+      triggered = true
+      queue = [[e, e.target!]]
+      hydrate(() => {
+        const events = queue
+        teardown()
+        if (events) {
+          for (const [e, target] of events) replay(e, target)
         }
       })
     }
-    forEach(el => {
-      for (const i of interactions) {
-        el.addEventListener(i, doHydrate, { once: true })
+
+    const teardown = () => {
+      queue = null
+      for (const el of roots) {
+        for (const i of interactions) {
+          el.removeEventListener(i, onInteraction)
+        }
       }
-    })
+    }
+
+    for (const el of roots) {
+      for (const i of interactions) {
+        el.addEventListener(i, onInteraction)
+      }
+    }
     return teardown
   }
+
+const stopPropagation = (e: Event) => e.stopPropagation()
 
 export function forEachElement(
   node: Node,

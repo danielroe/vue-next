@@ -392,6 +392,29 @@ describe('Vapor Mode hydration', () => {
         expect(data.value.spy).toHaveBeenCalledTimes(2)
       })
 
+      test('replays interactions that happen while loading', async () => {
+        let resolve: (() => void) | undefined
+        const { data, container, html } = await render(Comp =>
+          defineVaporAsyncComponent({
+            loader: () => new Promise(r => (resolve = () => r(Comp))),
+            hydrate: hydrateOnInteraction(['pointerenter', 'click']),
+          }),
+        )
+        const button = container.querySelector('button')!
+        button.dispatchEvent(new Event('pointerenter'))
+        triggerEvent('click', button)
+        triggerEvent('click', button)
+        await new Promise(r => setTimeout(r))
+        expect(data.value.spy).not.toHaveBeenCalled()
+
+        resolve!()
+        await new Promise(r => setTimeout(r))
+        expect(container.innerHTML).toBe(html)
+        expect(data.value.spy).toHaveBeenCalledTimes(2)
+        triggerEvent('click', button)
+        expect(data.value.spy).toHaveBeenCalledTimes(3)
+      })
+
       test('hydrates in place when created resolved', async () => {
         const { data, container, html } = await render(async Comp => {
           const AsyncComp = defineVaporAsyncComponent(() =>
