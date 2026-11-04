@@ -1201,9 +1201,10 @@ describe('Vapor Mode hydration', () => {
       createVaporSSRApp(App).mount(container)
       const buttons = () => container.querySelectorAll('button')
 
+      expect(innerHydrates.length).toBe(1)
+      ;(Inner as any).__asyncLoader()
       resolveInner(compileVaporComponent(innerCode, data))
       await new Promise(r => setTimeout(r))
-      expect(innerHydrates.length).toBe(1)
 
       resolveOuter(compileVaporComponent(outerCode, data, { Inner }))
       await new Promise(r => setTimeout(r))
@@ -1306,6 +1307,7 @@ describe('Vapor Mode hydration', () => {
       const refs = (app._instance as any).refs
 
       expect(refs.comp).toBeFalsy()
+      ;(AsyncComp as any).__asyncLoader()
       resolve(Comp)
       await new Promise(r => setTimeout(r))
       // resolved, but hydration is still deferred by the strategy
@@ -1354,9 +1356,10 @@ describe('Vapor Mode hydration', () => {
       app.mount(container)
       const refs = (app._instance as any).refs
 
+      expect(hydrates.length).toBe(2)
+      ;(AsyncComp as any).__asyncLoader()
       resolve(Comp)
       await new Promise(r => setTimeout(r))
-      expect(hydrates.length).toBe(2)
 
       hydrates[0]()
       await new Promise(r => setTimeout(r))
@@ -1564,7 +1567,7 @@ describe('Vapor Mode hydration', () => {
       expect(container.querySelector('i')).toBe(i)
 
       doHydrate!()
-      await nextTick()
+      await new Promise(r => setTimeout(r))
       expect(data.value.mounted).toHaveBeenCalledTimes(1)
       expect(container.querySelector('b')).toBe(b)
       expect(container.querySelector('i')).toBe(i)

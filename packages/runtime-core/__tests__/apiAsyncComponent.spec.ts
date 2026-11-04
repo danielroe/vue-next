@@ -987,4 +987,36 @@ describe('api: defineAsyncComponent', () => {
       vi.useRealTimers()
     }
   })
+
+  test('client render with a hydration strategy', async () => {
+    const strategy = vi.fn()
+    const Foo = defineAsyncComponent({
+      loader: () => Promise.resolve(() => 'resolved'),
+      hydrate: strategy,
+    })
+
+    const root = nodeOps.createElement('div')
+    createApp({
+      render: () => h(Foo),
+    }).mount(root)
+
+    await timeout()
+    expect(serializeInner(root)).toBe('resolved')
+    expect(strategy).not.toHaveBeenCalled()
+  })
+
+  test('Suspense client render with a hydration strategy', async () => {
+    const Foo = defineAsyncComponent({
+      loader: () => Promise.resolve(() => 'resolved'),
+      hydrate: () => {},
+    })
+
+    const root = nodeOps.createElement('div')
+    createApp({
+      render: () => h(Suspense, null, { default: () => h(Foo) }),
+    }).mount(root)
+
+    await timeout()
+    expect(serializeInner(root)).toBe('resolved')
+  })
 })

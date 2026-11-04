@@ -2374,6 +2374,144 @@ describe('SSR hydration', () => {
     }
   })
 
+  describe('deferred loading with a hydration strategy', () => {
+    const Comp = {
+      props: ['msg'],
+      setup(props: any) {
+        const count = ref(0)
+        return () =>
+          h('button', { onClick: () => count.value++ }, props.msg + count.value)
+      },
+    }
+
+    async function setup(
+      render: (AsyncComp: Component) => VNodeChild,
+      options: Partial<Parameters<typeof defineAsyncComponent>[0]> = {},
+    ) {
+      const hydrates: ((postHydrate?: () => void) => void)[] = []
+      const loader = vi.fn(() => Promise.resolve(Comp))
+      const define = () =>
+        defineAsyncComponent({
+          loader,
+          hydrate: hydrate => {
+            hydrates.push(hydrate)
+          },
+          ...(options as object),
+        })
+
+      const ServerComp = define()
+      const container = document.createElement('div')
+      container.innerHTML = await renderToString(
+        h({ render: () => render(ServerComp) }),
+      )
+      document.body.appendChild(container)
+      loader.mockClear()
+
+      const ClientComp = define()
+      const app = createSSRApp({ render: () => render(ClientComp) })
+      app.mount(container)
+      return { container, hydrates, loader, app }
+    }
+
+    test('should not load before the strategy calls hydrate', async () => {
+      const { container, hydrates, loader } = await setup(C =>
+        h(C, { msg: 'a' }),
+      )
+      expect(container.innerHTML).toBe('<button>a0</button>')
+      await new Promise(r => setTimeout(r))
+      expect(loader).not.toHaveBeenCalled()
+
+      const button = container.querySelector('button')!
+      const postHydrate = vi.fn(() => triggerEvent('click', button))
+      hydrates[0](postHydrate)
+      expect(loader).toHaveBeenCalledTimes(1)
+      expect(postHydrate).not.toHaveBeenCalled()
+
+      await new Promise(r => setTimeout(r))
+      expect(postHydrate).toHaveBeenCalledTimes(1)
+      await nextTick()
+      expect(container.innerHTML).toBe('<button>a1</button>')
+      expect(`Hydration node mismatch`).not.toHaveBeenWarned()
+    })
+
+    test('should hydrate each instance independently', async () => {
+      const { container, hydrates } = await setup(C => [
+        h(C, { msg: 'a' }),
+        h(C, { msg: 'b' }),
+      ])
+      hydrates[0]()
+      await new Promise(r => setTimeout(r))
+
+      const [a, b] = container.querySelectorAll('button')
+      triggerEvent('click', a)
+      triggerEvent('click', b)
+      await nextTick()
+      expect(container.innerHTML).toBe(
+        '<!--[--><button>a1</button><button>b0</button><!--]-->',
+      )
+      expect(`Hydration node mismatch`).not.toHaveBeenWarned()
+    })
+
+    test('should hydrate synchronously once loaded by another instance', async () => {
+      const { container, hydrates } = await setup(C => [
+        h(C, { msg: 'a' }),
+        h(C, { msg: 'b' }),
+      ])
+      hydrates[0]()
+      await new Promise(r => setTimeout(r))
+
+      const b = container.querySelectorAll('button')[1]
+      hydrates[1](() => triggerEvent('click', b))
+      await nextTick()
+      expect(container.innerHTML).toBe(
+        '<!--[--><button>a0</button><button>b1</button><!--]-->',
+      )
+      expect(`Hydration node mismatch`).not.toHaveBeenWarned()
+    })
+
+    test('should hydrate inside Suspense without waiting for the loader', async () => {
+      const onResolve = vi.fn()
+      const { container, hydrates, loader } = await setup(C =>
+        h(Suspense, { onResolve }, () => h(C, { msg: 'a' })),
+      )
+      await new Promise(r => setTimeout(r))
+      expect(loader).not.toHaveBeenCalled()
+      expect(onResolve).toHaveBeenCalled()
+
+      hydrates[0]()
+      await new Promise(r => setTimeout(r))
+      triggerEvent('click', container.querySelector('button')!)
+      await nextTick()
+      expect(container.innerHTML).toBe('<button>a1</button>')
+      expect(`Hydration node mismatch`).not.toHaveBeenWarned()
+    })
+
+    test('should start the timeout once loading begins', async () => {
+      const { hydrates, app } = await setup(C => h(C, { msg: 'a' }), {
+        timeout: 1,
+      })
+      const errorHandler = (app.config.errorHandler = vi.fn())
+      await new Promise(r => setTimeout(r, 10))
+      expect(errorHandler).not.toHaveBeenCalled()
+
+      hydrates[0]()
+      await new Promise(r => setTimeout(r, 10))
+      expect(errorHandler).not.toHaveBeenCalled()
+    })
+
+    test('should load when updated before hydration', async () => {
+      const msg = ref('a')
+      const { container, loader } = await setup(C => h(C, { msg: msg.value }))
+      msg.value = 'b'
+      await nextTick()
+      expect(loader).toHaveBeenCalledTimes(1)
+
+      await new Promise(r => setTimeout(r))
+      expect(container.innerHTML).toBe('<button>b0</button>')
+      expect(`Hydration node mismatch`).not.toHaveBeenWarned()
+    })
+  })
+
   test('update async wrapper before resolve', async () => {
     const Comp = {
       render() {

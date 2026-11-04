@@ -64,7 +64,10 @@ export function defineAsyncComponent<
     },
   } = createAsyncComponentContext(source)
 
-  let performLoad: () => Promise<ConcreteComponent | void>
+  const deferredLoads = new WeakMap<
+    GenericComponentInstance,
+    () => Promise<void>
+  >()
 
   return defineComponent({
     name: 'AsyncComponentWrapper',
@@ -77,7 +80,7 @@ export function defineAsyncComponent<
         instance,
         hydrate,
         getResolvedComp,
-        hydrateStrategy ? () => performLoad() : load,
+        deferredLoads.get(instance) || load,
         hydrateStrategy,
         true,
       )
@@ -107,40 +110,39 @@ export function defineAsyncComponent<
         )
       }
 
+      // lazy hydration: loading is deferred until the strategy calls hydrate
+      const isLazyHydrating = !!hydrateStrategy && !!instance.vnode.el
+
       // suspense-controlled or SSR.
       if (
-        (__FEATURE_SUSPENSE__ && suspensible && instance.suspense) ||
-        (__SSR__ && isInSSRComponentSetup)
+        !isLazyHydrating &&
+        ((__FEATURE_SUSPENSE__ && suspensible && instance.suspense) ||
+          (__SSR__ && isInSSRComponentSetup))
       ) {
-        performLoad = () =>
-          load()
-            .then(comp => {
-              return () => createInnerComp(comp, instance)
-            })
-            .catch(err => {
-              onError(err)
-              return () =>
-                errorComponent
-                  ? createVNode(errorComponent as ConcreteComponent, {
-                      error: err,
-                    })
-                  : null
-            })
-
-        if (!hydrateStrategy) {
-          return performLoad()
-        }
-        return
+        return load()
+          .then(comp => {
+            return () => createInnerComp(comp, instance)
+          })
+          .catch(err => {
+            onError(err)
+            return () =>
+              errorComponent
+                ? createVNode(errorComponent as ConcreteComponent, {
+                    error: err,
+                  })
+                : null
+          })
       }
 
-      const { loaded, error, delayed } = useAsyncComponentState(
+      const { loaded, error, delayed, startTimeout } = useAsyncComponentState(
         delay,
         timeout,
         onError,
         instance,
+        isLazyHydrating,
       )
 
-      performLoad = () =>
+      const performLoad = () =>
         load()
           .then(() => {
             if (instance.isUnmounted) return
@@ -164,14 +166,18 @@ export function defineAsyncComponent<
             error.value = err
           })
 
-      // lazy perform load if hydrate strategy is present
-      if (!hydrateStrategy) {
+      if (isLazyHydrating) {
+        deferredLoads.set(instance, () => {
+          startTimeout()
+          return performLoad()
+        })
+      } else {
         performLoad()
       }
 
       return () => {
         resolvedComp = getResolvedComp()
-        if (loaded.value && resolvedComp) {
+        if ((loaded.value || isLazyHydrating) && resolvedComp) {
           return createInnerComp(resolvedComp, instance)
         } else if (error.value && errorComponent) {
           return createVNode(errorComponent, {
@@ -288,10 +294,12 @@ export const useAsyncComponentState = (
   timeout: number | undefined,
   onError: (err: Error) => void,
   instance: GenericComponentInstance | null = currentInstance,
+  deferTimeout = false,
 ): {
   loaded: Ref<boolean>
   error: Ref<Error | undefined>
   delayed: Ref<boolean>
+  startTimeout: () => void
 } => {
   const loaded = ref(false)
   const error = ref()
@@ -314,18 +322,24 @@ export const useAsyncComponentState = (
     }, delay)
   }
 
-  if (timeout != null) {
-    timeoutTimer = setTimeout(() => {
-      if (instance && instance.isUnmounted) return
-      if (!loaded.value && !error.value) {
-        const err = new Error(`Async component timed out after ${timeout}ms.`)
-        onError(err)
-        error.value = err
-      }
-    }, timeout)
+  const startTimeout = () => {
+    if (timeout != null && timeoutTimer == null) {
+      timeoutTimer = setTimeout(() => {
+        if (instance && instance.isUnmounted) return
+        if (!loaded.value && !error.value) {
+          const err = new Error(`Async component timed out after ${timeout}ms.`)
+          onError(err)
+          error.value = err
+        }
+      }, timeout)
+    }
   }
 
-  return { loaded, error, delayed }
+  if (!deferTimeout) {
+    startTimeout()
+  }
+
+  return { loaded, error, delayed, startTimeout }
 }
 
 /**
@@ -347,7 +361,10 @@ export function performAsyncHydrate(
   const wasConnected = el.isConnected
   let patched = false
   if (skipIfUpdated) {
-    ;(instance.bu || (instance.bu = [])).push(() => (patched = true))
+    ;(instance.bu || (instance.bu = [])).push(() => {
+      patched = true
+      if (hydrateStrategy && !getResolvedComp()) load()
+    })
   }
   const performHydrate = () => {
     // skip hydration if the component has been patched
@@ -366,16 +383,14 @@ export function performAsyncHydrate(
   }
   if (hydrateStrategy) {
     const hydrateWithCallback = (postHydrate?: () => void) => {
-      if (getResolvedComp()) {
+      const done = () => {
         performHydrate()
         postHydrate && postHydrate()
+      }
+      if (getResolvedComp()) {
+        done()
       } else {
-        load().then(() => {
-          if (!instance.isUnmounted) {
-            performHydrate()
-            postHydrate && postHydrate()
-          }
-        })
+        load().then(() => !instance.isUnmounted && getResolvedComp() && done())
       }
     }
     const teardown = hydrateStrategy(hydrateWithCallback, cb =>

@@ -1987,7 +1987,7 @@ describe('VDOM interop', () => {
       await new Promise(resolve => setTimeout(resolve))
       if (mode === 'lazy hydration') {
         hydrateChild()
-        await nextTick()
+        await new Promise(resolve => setTimeout(resolve))
       }
       if (__DEV__) {
         expect(`Hydration children mismatch`).toHaveBeenWarned()
