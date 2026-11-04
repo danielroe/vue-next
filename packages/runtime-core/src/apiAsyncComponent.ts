@@ -385,7 +385,7 @@ export function performAsyncHydrate(
     const hydrateWithCallback = (postHydrate?: () => void) => {
       const done = () => {
         performHydrate()
-        postHydrate && postHydrate()
+        if (isFunction(postHydrate)) postHydrate()
       }
       if (getResolvedComp()) {
         done()

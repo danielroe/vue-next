@@ -2469,6 +2469,22 @@ describe('SSR hydration', () => {
       expect(`Hydration node mismatch`).not.toHaveBeenWarned()
     })
 
+    test('should ignore non-function arguments passed to hydrate', async () => {
+      const { container, hydrates } = await setup(C => [
+        h(C, { msg: 'a' }),
+        h(C, { msg: 'b' }),
+      ])
+      hydrates[0]()
+      await new Promise(r => setTimeout(r))
+
+      expect(() => hydrates[1](new Event('focus') as any)).not.toThrow()
+      triggerEvent('click', container.querySelectorAll('button')[1])
+      await nextTick()
+      expect(container.innerHTML).toBe(
+        '<!--[--><button>a0</button><button>b1</button><!--]-->',
+      )
+    })
+
     test('should hydrate inside Suspense without waiting for the loader', async () => {
       const onResolve = vi.fn()
       const { container, hydrates, loader } = await setup(C =>

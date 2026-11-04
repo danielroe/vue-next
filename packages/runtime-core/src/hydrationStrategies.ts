@@ -22,7 +22,9 @@ function ensureIdleCallbacks() {
 
 /**
  * A lazy hydration strategy for async components.
- * @param hydrate - call this to perform the actual hydration.
+ * @param hydrate - call this to load the component (if not already loaded)
+ *                  and perform the actual hydration. The optional
+ *                  `postHydrate` callback runs once hydration has completed.
  * @param forEachElement - iterate through the root elements of the component's
  *                         non-hydrated DOM, accounting for possible fragments.
  * @returns a teardown function to be called if the async component is unmounted
