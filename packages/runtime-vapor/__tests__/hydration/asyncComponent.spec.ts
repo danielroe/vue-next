@@ -258,8 +258,9 @@ describe('Vapor Mode hydration', () => {
         expect(container.querySelector('button')).toBe(button)
         expect(`Hydration node mismatch`).not.toHaveBeenWarned()
         expect(`Hydration children mismatch`).not.toHaveBeenWarned()
-        triggerEvent('click', button)
         expect(data.value.spy).toHaveBeenCalledTimes(1)
+        triggerEvent('click', button)
+        expect(data.value.spy).toHaveBeenCalledTimes(2)
 
         data.value.msg = 'world'
         await nextTick()
@@ -386,8 +387,9 @@ describe('Vapor Mode hydration', () => {
         expect(container.querySelector('button')).toBe(button)
         expect(`Hydration node mismatch`).not.toHaveBeenWarned()
         expect(`Hydration children mismatch`).not.toHaveBeenWarned()
-        triggerEvent('click', button)
         expect(data.value.spy).toHaveBeenCalledTimes(1)
+        triggerEvent('click', button)
+        expect(data.value.spy).toHaveBeenCalledTimes(2)
       })
 
       test('hydrates in place when created resolved', async () => {

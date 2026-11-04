@@ -117,8 +117,8 @@ export const hydrateOnInteraction: HydrationStrategyFactory<
         hasHydrated = true
         teardown()
         hydrate(() => {
-          // replay event if the event is not delegated
-          if (!(`$evt${e.type}` in e.target!)) {
+          // replay event unless it is still propagating to a delegated handler
+          if (!e.eventPhase || !(`$evt${e.type}` in e.target!)) {
             e.target!.dispatchEvent(new (e.constructor as any)(e.type, e))
           }
         })
