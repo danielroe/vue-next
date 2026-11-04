@@ -382,6 +382,12 @@ export function performAsyncHydrate(
     hydrate()
   }
   if (hydrateStrategy) {
+    let teardown: (() => void) | void
+    const performTeardown = () => {
+      const fn = teardown
+      teardown = undefined
+      if (fn) fn()
+    }
     const hydrateWithCallback = (postHydrate?: () => void) => {
       const done = () => {
         performHydrate()
@@ -390,14 +396,27 @@ export function performAsyncHydrate(
       if (getResolvedComp()) {
         done()
       } else {
-        load().then(() => !instance.isUnmounted && getResolvedComp() && done())
+        load().then(
+          () => {
+            if (instance.isUnmounted) return
+            if (getResolvedComp()) {
+              done()
+            } else {
+              performTeardown()
+            }
+          },
+          err => {
+            performTeardown()
+            handleError(err, instance, ErrorCodes.ASYNC_COMPONENT_LOADER)
+          },
+        )
       }
     }
-    const teardown = hydrateStrategy(hydrateWithCallback, cb =>
+    teardown = hydrateStrategy(hydrateWithCallback, cb =>
       forEachElement(el, cb),
     )
     if (teardown) {
-      ;(instance.bum || (instance.bum = [])).push(teardown)
+      ;(instance.bum || (instance.bum = [])).push(performTeardown)
     }
   } else if (getResolvedComp()) {
     performHydrate()

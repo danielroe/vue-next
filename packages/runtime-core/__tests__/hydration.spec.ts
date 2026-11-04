@@ -2546,18 +2546,32 @@ describe('SSR hydration', () => {
       document.body.appendChild(container)
 
       let resolve: ((comp: Component) => void) | undefined
-      const loader = vi.fn(() => new Promise<Component>(r => (resolve = r)))
+      let reject: ((err: Error) => void) | undefined
+      const loader = vi.fn(
+        () =>
+          new Promise<Component>((res, rej) => {
+            resolve = res
+            reject = rej
+          }),
+      )
       const ClientComp = defineAsyncComponent({
         loader,
         hydrate: hydrateOnInteraction(interactions),
       })
-      createSSRApp({ render: () => render(ClientComp) }).mount(container)
+      const app = createSSRApp({ render: () => render(ClientComp) })
+      const errorHandler = (app.config.errorHandler = vi.fn())
+      app.mount(container)
       return {
         container,
         onClick,
         loader,
+        errorHandler,
         load: async () => {
           resolve!(Comp)
+          await new Promise(r => setTimeout(r))
+        },
+        fail: async () => {
+          reject!(new Error('failed'))
           await new Promise(r => setTimeout(r))
         },
       }
@@ -2612,6 +2626,19 @@ describe('SSR hydration', () => {
       span.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       expect(onClick).toHaveBeenCalledTimes(2)
       expect(onParentClick).toHaveBeenCalledTimes(2)
+    })
+
+    test('should remove listeners when loading fails', async () => {
+      const { container, errorHandler, fail } = await setup('click')
+      const button = container.querySelector('button')!
+      const removeEventListener = vi.spyOn(button, 'removeEventListener')
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await fail()
+      expect(errorHandler).toHaveBeenCalledTimes(1)
+      expect(removeEventListener).toHaveBeenCalledWith(
+        'click',
+        expect.any(Function),
+      )
     })
 
     test('should drop queued interactions when unmounted while loading', async () => {

@@ -28,8 +28,8 @@ function ensureIdleCallbacks() {
  * @param forEachElement - iterate through the root elements of the component's
  *                         non-hydrated DOM, accounting for possible fragments.
  * @returns a teardown function to be called if the async component is unmounted
- *          before it is hydrated. This can be used to e.g. remove DOM event
- *          listeners.
+ *          before it is hydrated, or if loading it fails. This can be used to
+ *          e.g. remove DOM event listeners.
  */
 export type HydrationStrategy = (
   hydrate: (postHydrate?: () => void) => void,

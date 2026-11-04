@@ -415,6 +415,45 @@ describe('Vapor Mode hydration', () => {
         expect(data.value.spy).toHaveBeenCalledTimes(3)
       })
 
+      test('removes interaction listeners when loading fails', async () => {
+        const data = ref({ msg: 'hello', spy: vi.fn() })
+        const SSRAsync = defineAsyncComponent(() =>
+          Promise.resolve(
+            compileVaporComponent(innerCode, data, undefined, true),
+          ),
+        )
+        const html = await VueServerRenderer.renderToString(
+          runtimeDom.createSSRApp(
+            compileVaporComponent(appCode, data, { AsyncComp: SSRAsync }, true),
+          ),
+        )
+        let reject: (() => void) | undefined
+        const AsyncComp = defineVaporAsyncComponent({
+          loader: () =>
+            new Promise((_, r) => (reject = () => r(new Error('failed')))),
+          hydrate: hydrateOnInteraction('click'),
+        })
+        const container = document.createElement('div')
+        container.innerHTML = html
+        document.body.appendChild(container)
+        const app = createVaporSSRApp(
+          compileVaporComponent(appCode, data, { AsyncComp }),
+        )
+        const errorHandler = (app.config.errorHandler = vi.fn())
+        app.mount(container)
+
+        const button = container.querySelector('button')!
+        const removeEventListener = vi.spyOn(button, 'removeEventListener')
+        triggerEvent('click', button)
+        reject!()
+        await new Promise(r => setTimeout(r))
+        expect(errorHandler).toHaveBeenCalledTimes(1)
+        expect(removeEventListener).toHaveBeenCalledWith(
+          'click',
+          expect.any(Function),
+        )
+      })
+
       test('hydrates in place when created resolved', async () => {
         const { data, container, html } = await render(async Comp => {
           const AsyncComp = defineVaporAsyncComponent(() =>
